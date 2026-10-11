@@ -1,0 +1,33 @@
+{
+  "name": "@red-cup-engineering/discord-rest-transport-service",
+  "version": "0.6.0",
+  "type": "module",
+  "description": "Discord REST protocol capability: typed carriers, dependency-free codecs, bot transport, and narrow user-OAuth identity and guild-membership transport shared across the discord-services-section.",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "files": [
+    "src",
+    "package.json"
+  ],
+  "main": "./src/discord.mjs",
+  "exports": {
+    ".": {
+      "import": "./src/discord.mjs"
+    },
+    "./codecs": {
+      "import": "./src/discord-codecs.mjs"
+    },
+    "./user-oauth": {
+      "import": "./src/discord-user-oauth.mjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@red-cup-engineering/json-services-section": "workspace:*"
+  },
+  "sideEffects": false
+}
