@@ -3,6 +3,11 @@
   "version": "0.6.1",
   "type": "module",
   "description": "Discord REST protocol capability: typed carriers, dependency-free codecs, bot transport, and narrow user-OAuth identity and guild-membership transport shared across the discord-services-section.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/red-cup-engineering/computer-web-engineering-services-section.git",
+    "directory": "services/web-platform-services-section/services/web2-platform-services-section/services/web2-social-platform-services-section/services/discord-services-section/services/discord-rest-transport-service"
+  },
   "engines": {
     "node": ">=22.18"
   },
