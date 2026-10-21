@@ -168,9 +168,16 @@ export class DiscordRestTransport {
 
   async createMessage(channelId, input, options = {}) {
     const files = typeof input === "string" ? undefined : input.files;
+    const replyToId = typeof input === "string" ? undefined : input.replyToId;
+    if (replyToId !== undefined && (typeof replyToId !== "string" || !replyToId.trim())) {
+      throw new TypeError("replyToId must be a nonempty existing Discord message id");
+    }
     const body = typeof input === "string" ? { content: input } : {
       content: input.content,
       allowed_mentions: input.allowedMentions === undefined ? undefined : { users: input.allowedMentions.users ?? [] },
+      ...(replyToId === undefined ? {} : {
+        message_reference: { type: 0, message_id: replyToId, channel_id: channelId, fail_if_not_exists: true },
+      }),
     };
     const created =
       files === undefined || files.length === 0
@@ -465,6 +472,13 @@ export class InMemoryDiscordTransport {
 
   async createMessage(channelId, input, _options = {}) {
     const content = typeof input === "string" ? input : input.content;
+    const replyToId = typeof input === "string" ? undefined : input.replyToId;
+    if (replyToId !== undefined && (typeof replyToId !== "string" || !replyToId.trim())) {
+      throw new TypeError("replyToId must be a nonempty existing Discord message id");
+    }
+    if (replyToId !== undefined && !(this.messages.get(channelId) ?? []).some(message => message.id === replyToId)) {
+      throw new Error("Discord reply target does not exist in this channel");
+    }
     const message = Object.freeze({
       id: this.#id("message", channelId),
       channelId,
@@ -473,6 +487,7 @@ export class InMemoryDiscordTransport {
       authorBot: this.currentUser.bot ?? false,
       content,
       timestamp: new Date().toISOString(),
+      ...(replyToId === undefined ? {} : { replyToId }),
       mentionedUserIds: Object.freeze([...content.matchAll(/<@!?(\w[\w-]*)>/gu)].map((match) => match[1])),
     });
     this.messages.set(channelId, [message, ...(this.messages.get(channelId) ?? [])]);
