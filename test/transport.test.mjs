@@ -37,3 +37,59 @@ test("message carrier admits a well-formed wire message and refuses a malformed 
   assert.ok(discordMessageCarrier.assert(wire));
   assert.throws(() => discordMessageCarrier.assert({ kind: "discord.message" }));
 });
+
+test("REST createMessage preserves a native Discord reply reference, suppressing accidental unthreaded fallback", async () => {
+  const originalFetch = globalThis.fetch;
+  const sends = [];
+  globalThis.fetch = async (url, options = {}) => {
+    sends.push({ url: String(url), options });
+    const sent = JSON.parse(options.body);
+    return new Response(JSON.stringify({
+      id: "987", channel_id: "123",
+      author: { id: "bot", username: "Zelo", bot: true },
+      content: sent.content,
+      timestamp: "2026-10-20T23:00:00Z",
+      message_reference: sent.message_reference,
+      mentions: [],
+    }), { status: 200 });
+  };
+  try {
+    const transport = new DiscordRestTransport({ token: "test-token", apiBase: "https://discord.test/api/v10" });
+    const replied = await transport.createMessage("123", {
+      content: "A grounded response",
+      replyToId: "456",
+      allowedMentions: { users: [] },
+    });
+    assert.equal(replied.replyToId, "456");
+    assert.deepEqual(JSON.parse(sends[0].options.body), {
+      content: "A grounded response",
+      allowed_mentions: { users: [] },
+      message_reference: {
+        type: 0, message_id: "456", channel_id: "123", fail_if_not_exists: true,
+      },
+    });
+    await transport.createMessage("123", "An ordinary message");
+    assert.equal(Object.hasOwn(JSON.parse(sends[1].options.body), "message_reference"), false);
+    await assert.rejects(() => transport.createMessage("123", {
+      content: "Cannot reply to nowhere", replyToId: "",
+    }), /replyToId must be a nonempty/);
+    assert.equal(sends.length, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("in-memory Discord reply references require an observed same-channel target", async () => {
+  const transport = new InMemoryDiscordTransport();
+  const first = await transport.createMessage("room", "A member has a question");
+  const second = await transport.createMessage("room", {
+    content: "Zelo responds inside the conversation",
+    replyToId: first.id,
+    allowedMentions: { users: [] },
+  });
+  assert.equal(second.replyToId, first.id);
+  assert.equal((await transport.listMessages("room", 5))[0].replyToId, first.id);
+  await assert.rejects(() => transport.createMessage("different-room", {
+    content: "Cannot jump a thread boundary", replyToId: first.id,
+  }), /does not exist in this channel/);
+});
