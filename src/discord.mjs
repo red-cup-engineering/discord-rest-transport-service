@@ -74,7 +74,7 @@ export function discordInviteFromWire(wire, code, observedAt) {
   const idOf = (part, label) => {
     if (part === undefined || part === null) return null;
     if (typeof part !== "object" || Array.isArray(part) ||
-      typeof part.id !== "string" || !/^\\d{5,22}$/u.test(part.id))
+      typeof part.id !== "string" || !/^\d{5,22}$/u.test(part.id))
       throw new TypeError(`Discord invite has an invalid ${label} identity`);
     return part.id;
   };
