@@ -55,6 +55,47 @@ export function botToken(source = process.env) {
   return env("DISCORD_BOT_TOKEN", source) ?? env("DISCORD_TOKEN", source);
 }
 
+
+/** Validate a code, not a caller-supplied URL or path (no arbitrary host or query). */
+export function qualifyDiscordInviteCode(value) {
+  if (typeof value !== "string" || !/^[A-Za-z0-9_-]{2,64}$/u.test(value)) {
+    throw new TypeError("Discord invite needs one bounded code, not a URL or route");
+  }
+  return value;
+}
+
+/**
+ * Reduce Discord's original Get Invite response to the minimum public
+ * evidence required for a destination check. Do not expose inviter identity,
+ * member listings or infer guild authorization, successful joining or
+ * permanence from a provider GET.
+ */
+export function readDiscordInviteResponse(wire, requestedCode) {
+  const code = qualifyDiscordInviteCode(requestedCode);
+  const response = record(wire);
+  if (response.code !== code) throw new TypeError("Discord invite returned a different code");
+  if (response.type !== undefined && ![0, 1, 2].includes(response.type)) {
+    throw new TypeError("Discord invite type was not recognized");
+  }
+  const expiresAt = response.expires_at;
+  if (expiresAt !== undefined && expiresAt !== null &&
+      (typeof expiresAt !== "string" || !Number.isFinite(Date.parse(expiresAt)))) {
+    throw new TypeError("Discord invite expiration was malformed");
+  }
+  const guildId = optionalStringField(record(response.guild), "id");
+  const channelId = optionalStringField(record(response.channel), "id");
+  return Object.freeze({
+    kind: "discord.invite-observation",
+    code,
+    inviteType: response.type ?? null,
+    guildId: guildId ?? null,
+    channelId: channelId ?? null,
+    // Missing and explicit null have distinct meanings; null is not a
+    // guarantee that the provider cannot revoke the invitation later.
+    ...(expiresAt === undefined ? {} : { expiresAt }),
+  });
+}
+
 export class DiscordRestTransport {
   #token;
   #apiBase;
@@ -83,6 +124,13 @@ export class DiscordRestTransport {
   async getGuild(guildId) {
     const guild = await this.#request("GET", `/guilds/${guildId}`);
     return guildFromWire(guild);
+  }
+
+  /** Read-only Discord Get Invite, never Accept Invite or guild membership. */
+  async getInvite(code) {
+    const key = qualifyDiscordInviteCode(code);
+    const result = await this.#request("GET", `/invites/${encodeURIComponent(key)}`);
+    return readDiscordInviteResponse(result, key);
   }
 
   async listGuilds() {
@@ -347,6 +395,7 @@ export class InMemoryDiscordTransport {
   bannedMembers = new Map();
   emojis = new Map();
   stickers = new Map();
+  invites = new Map();
   onboarding = new Map();
   premiumTier;
   #sequence = 0;
@@ -356,6 +405,9 @@ export class InMemoryDiscordTransport {
     this.currentUser = options.currentUser ?? { id: "bot-discord", username: "Discord Bot", bot: true };
     const guild = options.guild ?? { id: "guild-discord", name: "Discord Guild", ownerId: "owner" };
     this.guilds.set(guild.id, guild);
+    for (const [code, observation] of options.invites ?? []) {
+      this.invites.set(qualifyDiscordInviteCode(code), observation);
+    }
     this.roles.set(guild.id, { id: guild.id, guildId: guild.id, name: "@everyone", permissions: "0" });
     this.premiumTier = options.premiumTier ?? 0;
   }
@@ -372,6 +424,16 @@ export class InMemoryDiscordTransport {
     const guild = this.guilds.get(guildId);
     if (guild === undefined) throw new Error(`unknown guild ${guildId}`);
     return guild;
+  }
+
+  async getInvite(code) {
+    const key = qualifyDiscordInviteCode(code);
+    if (!this.invites.has(key)) {
+      const error = new Error(`unknown Discord invite ${key}`);
+      error.status = 404;
+      throw error;
+    }
+    return readDiscordInviteResponse(this.invites.get(key), key);
   }
 
   async listGuilds() {
