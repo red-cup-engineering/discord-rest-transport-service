@@ -6,8 +6,12 @@ const origin = "https://l-space.561.group";
 const callback = origin + "/oauth/discord/callback";
 const guildId = "1184863861065658419";
 
-const request = (path, {method="GET",cookie="",body}={}) => new Request(origin+path,{
-  method,headers:cookie ? {cookie} : undefined,body,
+const request = (path, {method="GET",cookie="",body,originHeader,fetchSite}={}) => new Request(origin+path,{
+  method,headers:{
+    ...(cookie ? {cookie} : {}),
+    ...(originHeader === undefined ? {} : {origin:originHeader}),
+    ...(fetchSite === undefined ? {} : {"sec-fetch-site":fetchSite}),
+  },body,
 });
 const cookiePair = (response, name) => {
   const set = response.headers.getSetCookie().find(s=>s.startsWith(name+"="));
@@ -141,7 +145,24 @@ test("access-token refresh retains server custody; logout revokes local and prov
     {accessToken:"access-refreshed"});
   assert.equal(t.refreshes,1);
   assert.equal((await t.web.route(request("/oauth/discord/logout",{cookie:session}))).status,405);
-  const ended=await t.web.route(request("/oauth/discord/logout",{method:"POST",cookie:session}));
+  const missingOrigin=await t.web.route(request("/oauth/discord/logout",{
+    method:"POST",cookie:session,
+  }));
+  assert.equal(missingOrigin.status,403,"a session cookie alone cannot authorize a logout POST");
+  const fromSibling=await t.web.route(request("/oauth/discord/logout",{
+    method:"POST",cookie:session,originHeader:"https://other.561.group",fetchSite:"same-site",
+  }));
+  assert.equal(fromSibling.status,403,"other 561.group subdomains are not same-origin");
+  const forgedSite=await t.web.route(request("/oauth/discord/logout",{
+    method:"POST",cookie:session,originHeader:origin,fetchSite:"same-site",
+  }));
+  assert.equal(forgedSite.status,403,"browser cross-origin metadata still refuses");
+  assert.equal(t.revoked,0,"a refused logout never revokes the current member's session");
+  assert.deepEqual(await t.web.readSession(request("/api/marks",{cookie:session})),
+    {accessToken:"access-refreshed"});
+  const ended=await t.web.route(request("/oauth/discord/logout",{
+    method:"POST",cookie:session,originHeader:origin,fetchSite:"same-origin",
+  }));
   assert.equal(ended.status,303);
   assert.equal(ended.headers.get("location"),"/");
   assert.equal(t.revoked,1);
