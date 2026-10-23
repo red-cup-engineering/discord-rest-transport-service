@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { DiscordRestTransport, discordInviteFromWire } from "../src/discord.mjs";
+import { DiscordRestTransport, InMemoryDiscordTransport, discordInviteFromWire } from "../src/discord.mjs";
 
 const code = "xZHxzDz4zv";
 const observedAt = "2026-10-22T14:00:00.000Z";
@@ -106,4 +106,27 @@ test("provider 404 and throttle are refusals, not availability or automatic retr
     await assert.rejects(client.getInvite(code), error => error.status === 429);
     assert.equal(calls, 2, "one GET per attempt and no hidden throttle retry");
   } finally { globalThis.fetch = originalFetch; }
+});
+
+
+test("in-memory Get Invite shares exact production observation semantics and refuses absent or unsafe codes", async () => {
+  const transport = new InMemoryDiscordTransport({
+    guild: { id: guildId, name: "Turntide Islands" },
+    invites: [[code, guildInvite()]],
+  });
+  const result = await transport.getInvite(code);
+  assert.equal(result.kind, "discord.invite-provider-observation/v1");
+  assert.equal(result.provider, "discord");
+  assert.equal(result.guildId, guildId);
+  assert.equal(result.channelId, channelId);
+  assert.equal(result.expiryState, "none-reported");
+  assert.ok(Number.isFinite(Date.parse(result.observedAt)));
+  assert.equal(Object.hasOwn(result, "inviter"), false);
+  assert.equal((await transport.getGuild(guildId)).id, guildId);
+  await assert.rejects(transport.getInvite("not-found"), error => error.status === 404);
+  await assert.rejects(transport.getInvite("../guilds"), /path-safe/);
+  const poisoned = new InMemoryDiscordTransport({
+    invites: [[code, { ...guildInvite(), code: "wrong-code" }]],
+  });
+  await assert.rejects(poisoned.getInvite(code), /matching invite code/);
 });
