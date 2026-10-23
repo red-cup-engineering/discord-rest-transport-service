@@ -187,6 +187,14 @@ export function createDiscordUserOAuthWebSessions({
       ]);
     }
     if (request.method !== "POST") return refused(405,"logout-must-be-post");
+    // SameSite=Lax is not a same-ORIGIN CSRF policy: another 561.group
+    // subdomain could otherwise submit a form that clears this session.
+    // This action has no bearer/body token, so require the exact canonical
+    // Origin and reject any browser-provided cross-origin Fetch Metadata.
+    if (request.headers.get("origin") !== url.origin ||
+        (request.headers.has("sec-fetch-site") &&
+          request.headers.get("sec-fetch-site") !== "same-origin"))
+      return refused(403,"logout-origin-not-admitted");
     const id = valueOfCookie(request,activeCookie);
     const entry = id===null?undefined:sessions.get(id);
     if (id!==null) sessions.delete(id); // local grant revoked even if Discord is down
