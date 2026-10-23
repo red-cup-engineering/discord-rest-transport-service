@@ -400,6 +400,7 @@ export class InMemoryDiscordTransport {
   bannedMembers = new Map();
   emojis = new Map();
   stickers = new Map();
+  invites = new Map();
   onboarding = new Map();
   premiumTier;
   #sequence = 0;
@@ -409,6 +410,12 @@ export class InMemoryDiscordTransport {
     this.currentUser = options.currentUser ?? { id: "bot-discord", username: "Discord Bot", bot: true };
     const guild = options.guild ?? { id: "guild-discord", name: "Discord Guild", ownerId: "owner" };
     this.guilds.set(guild.id, guild);
+    for (const [code, wire] of options.invites ?? []) {
+      if (typeof code !== "string" || !/^[A-Za-z0-9_-]{2,64}$/u.test(code)) {
+        throw new TypeError("Discord invite code must be a bounded path-safe code");
+      }
+      this.invites.set(code, wire);
+    }
     this.roles.set(guild.id, { id: guild.id, guildId: guild.id, name: "@everyone", permissions: "0" });
     this.premiumTier = options.premiumTier ?? 0;
   }
@@ -425,6 +432,20 @@ export class InMemoryDiscordTransport {
     const guild = this.guilds.get(guildId);
     if (guild === undefined) throw new Error(`unknown guild ${guildId}`);
     return guild;
+  }
+
+  /** Simulated original Get Invite, with exactly the same typed projection as REST. */
+  async getInvite(code) {
+    if (typeof code !== "string" || !/^[A-Za-z0-9_-]{2,64}$/u.test(code)) {
+      throw new TypeError("Discord invite code must be a bounded path-safe code");
+    }
+    const wire = this.invites.get(code);
+    if (wire === undefined) {
+      const error = new Error(`unknown Discord invite ${code}`);
+      error.status = 404;
+      throw error;
+    }
+    return discordInviteFromWire(wire, code, new Date().toISOString());
   }
 
   async listGuilds() {
