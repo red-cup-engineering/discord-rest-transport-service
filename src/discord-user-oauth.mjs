@@ -176,6 +176,10 @@ export async function getCurrentDiscordGuildMember(
   if (!Array.isArray(raw.roles) || !raw.roles.every((role) => typeof role === "string" && role.length > 0)) {
     throw new DiscordUserAuthorizationError("malformed_response", "Discord guild member omitted role IDs");
   }
+  // Discord may omit pending for completed members. Do not reinterpret a
+  // malformed present value as nonpending: only absent/boolean is valid.
+  if (raw.pending !== undefined && typeof raw.pending !== "boolean")
+    throw new DiscordUserAuthorizationError("malformed_response", "Discord guild member returned invalid pending state");
   const nick = typeof raw.nick === "string" && raw.nick.length > 0 ? raw.nick : undefined;
   return Object.freeze({
     roles: Object.freeze([...raw.roles]),
