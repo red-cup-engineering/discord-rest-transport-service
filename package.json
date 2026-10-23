@@ -25,7 +25,8 @@
     "./user-oauth": {
       "import": "./src/discord-user-oauth.mjs"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./user-oauth/session": "./src/discord-user-oauth-session.mjs"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"
