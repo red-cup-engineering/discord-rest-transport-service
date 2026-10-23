@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { DiscordRestTransport, InMemoryDiscordTransport, discordInviteFromWire } from "../src/discord.mjs";
+import { DiscordRestTransport, InMemoryDiscordTransport, qualifyDiscordInviteCode, discordInviteFromWire } from "../src/discord.mjs";
 
 const code = "xZHxzDz4zv";
 const observedAt = "2026-10-22T14:00:00.000Z";
@@ -129,4 +129,11 @@ test("in-memory Get Invite shares exact production observation semantics and ref
     invites: [[code, { ...guildInvite(), code: "wrong-code" }]],
   });
   await assert.rejects(poisoned.getInvite(code), /matching invite code/);
+});
+
+test("shared path-safe invite validator is reusable and rejects URLs or arbitrary paths", () => {
+  assert.equal(qualifyDiscordInviteCode(code), code);
+  for (const bad of ["https://discord.gg/" + code, "../../secret", "abc?q=1", "abc#frag", "", "x".repeat(65), null]) {
+    assert.throws(() => qualifyDiscordInviteCode(bad), /path-safe/);
+  }
 });
