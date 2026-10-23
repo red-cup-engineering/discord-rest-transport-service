@@ -55,6 +55,14 @@ export function botToken(source = process.env) {
   return env("DISCORD_BOT_TOKEN", source) ?? env("DISCORD_TOKEN", source);
 }
 
+/** Shared exact invite code qualifier: excludes hosts, paths and query strings. */
+export function qualifyDiscordInviteCode(code) {
+  if (typeof code !== "string" || !/^[A-Za-z0-9_-]{2,64}$/u.test(code)) {
+    throw new TypeError("Discord invite code must be a bounded path-safe code");
+  }
+  return code;
+}
+
 /** Decode only a public invite's operational destination, not its inviter or members.
  * The response says what Discord returned at one instant: not that the link is
  * permanent, community-authorized, available to a particular user, or that
@@ -63,8 +71,7 @@ export function botToken(source = process.env) {
  * https://docs.discord.com/developers/resources/invite#get-invite
  */
 export function discordInviteFromWire(wire, code, observedAt) {
-  if (typeof code !== "string" || !/^[A-Za-z0-9_-]{2,64}$/u.test(code))
-    throw new TypeError("Discord invite code must be a bounded path-safe code");
+  qualifyDiscordInviteCode(code);
   if (typeof observedAt !== "string" || !Number.isFinite(Date.parse(observedAt)))
     throw new TypeError("invite observation needs an actual timestamp");
   if (wire === null || typeof wire !== "object" || Array.isArray(wire) || wire.code !== code)
@@ -126,8 +133,7 @@ export class DiscordRestTransport {
 
   /** One bounded GET; 429 and other refusals remain visible, never a silent retry loop. */
   async getInvite(code) {
-    if (typeof code !== "string" || !/^[A-Za-z0-9_-]{2,64}$/u.test(code))
-      throw new TypeError("Discord invite code must be a bounded path-safe code");
+    qualifyDiscordInviteCode(code);
     const response = await this.#request("GET", `/invites/${code}?with_expiration=true`,
       undefined, undefined, undefined, 0);
     return discordInviteFromWire(response, code, new Date().toISOString());
@@ -411,9 +417,7 @@ export class InMemoryDiscordTransport {
     const guild = options.guild ?? { id: "guild-discord", name: "Discord Guild", ownerId: "owner" };
     this.guilds.set(guild.id, guild);
     for (const [code, wire] of options.invites ?? []) {
-      if (typeof code !== "string" || !/^[A-Za-z0-9_-]{2,64}$/u.test(code)) {
-        throw new TypeError("Discord invite code must be a bounded path-safe code");
-      }
+      qualifyDiscordInviteCode(code);
       this.invites.set(code, wire);
     }
     this.roles.set(guild.id, { id: guild.id, guildId: guild.id, name: "@everyone", permissions: "0" });
@@ -436,9 +440,7 @@ export class InMemoryDiscordTransport {
 
   /** Simulated original Get Invite, with exactly the same typed projection as REST. */
   async getInvite(code) {
-    if (typeof code !== "string" || !/^[A-Za-z0-9_-]{2,64}$/u.test(code)) {
-      throw new TypeError("Discord invite code must be a bounded path-safe code");
-    }
+    qualifyDiscordInviteCode(code);
     const wire = this.invites.get(code);
     if (wire === undefined) {
       const error = new Error(`unknown Discord invite ${code}`);
