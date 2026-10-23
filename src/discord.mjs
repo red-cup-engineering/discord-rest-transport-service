@@ -55,6 +55,52 @@ export function botToken(source = process.env) {
   return env("DISCORD_BOT_TOKEN", source) ?? env("DISCORD_TOKEN", source);
 }
 
+/** Shared exact invite code qualifier: excludes hosts, paths and query strings. */
+export function qualifyDiscordInviteCode(code) {
+  if (typeof code !== "string" || !/^[A-Za-z0-9_-]{2,64}$/u.test(code)) {
+    throw new TypeError("Discord invite code must be a bounded path-safe code");
+  }
+  return code;
+}
+
+/** Decode only a public invite's operational destination, not its inviter or members.
+ * The response says what Discord returned at one instant: not that the link is
+ * permanent, community-authorized, available to a particular user, or that
+ * joining confers governance standing. The caller retains authenticated
+ * transport provenance separately from this pure projection.
+ * https://docs.discord.com/developers/resources/invite#get-invite
+ */
+export function discordInviteFromWire(wire, code, observedAt) {
+  qualifyDiscordInviteCode(code);
+  if (typeof observedAt !== "string" || !Number.isFinite(Date.parse(observedAt)))
+    throw new TypeError("invite observation needs an actual timestamp");
+  if (wire === null || typeof wire !== "object" || Array.isArray(wire) || wire.code !== code)
+    throw new TypeError("Discord returned no matching invite code");
+  if (wire.type !== undefined && wire.type !== 0)
+    throw new TypeError("Discord invite is not a guild invitation");
+  const idOf = (part, label) => {
+    if (part === undefined || part === null) return null;
+    if (typeof part !== "object" || Array.isArray(part) ||
+      typeof part.id !== "string" || !/^\d{5,22}$/u.test(part.id))
+      throw new TypeError(`Discord invite has an invalid ${label} identity`);
+    return part.id;
+  };
+  const guildId = idOf(wire.guild, "guild");
+  const channelId = idOf(wire.channel, "channel");
+  const reported = Object.hasOwn(wire, "expires_at");
+  const expiry = wire.expires_at;
+  if (reported && expiry !== null &&
+    (typeof expiry !== "string" || !Number.isFinite(Date.parse(expiry))))
+    throw new TypeError("Discord invite expiry is invalid");
+  return Object.freeze({
+    kind: "discord.invite-provider-observation/v1",
+    provider: "discord", method: "GET /invites/{code}",
+    code, observedAt, guildId, channelId,
+    expiryState: !reported ? "unknown" : expiry === null ? "none-reported" : "expires-at",
+    ...(typeof expiry === "string" ? { expiresAt: expiry } : {}),
+  });
+}
+
 export class DiscordRestTransport {
   #token;
   #apiBase;
@@ -83,6 +129,14 @@ export class DiscordRestTransport {
   async getGuild(guildId) {
     const guild = await this.#request("GET", `/guilds/${guildId}`);
     return guildFromWire(guild);
+  }
+
+  /** One bounded GET; 429 and other refusals remain visible, never a silent retry loop. */
+  async getInvite(code) {
+    qualifyDiscordInviteCode(code);
+    const response = await this.#request("GET", `/invites/${code}?with_expiration=true`,
+      undefined, undefined, undefined, 0);
+    return discordInviteFromWire(response, code, new Date().toISOString());
   }
 
   async listGuilds() {
@@ -296,7 +350,7 @@ export class DiscordRestTransport {
     await this.#request("DELETE", `/guilds/${guildId}/members/${userId}/roles/${roleId}`);
   }
 
-  async #request(method, route, body, reason, extraHeaders) {
+  async #request(method, route, body, reason, extraHeaders, rateLimitRetries = undefined) {
     const res = await fetch(`${this.#apiBase}${route}`, {
       method,
       headers: {
@@ -309,9 +363,14 @@ export class DiscordRestTransport {
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     if (res.status === 429) {
+      // A provenance probe may refuse immediately rather than consuming unknown
+      // retries or turning Discord throttling into evidence of a valid invite.
+      if (rateLimitRetries === 0)
+        throw discordError(method, route, res.status, await res.text());
       const retry = await res.json().catch(() => ({ retry_after: 1 }));
       await new Promise((resolve) => setTimeout(resolve, Math.ceil((retry.retry_after ?? 1) * 1000)));
-      return this.#request(method, route, body, reason, extraHeaders);
+      return this.#request(method, route, body, reason, extraHeaders,
+        rateLimitRetries === undefined ? undefined : rateLimitRetries - 1);
     }
     const text = await res.text();
     if (!res.ok) throw discordError(method, route, res.status, text);
@@ -347,6 +406,7 @@ export class InMemoryDiscordTransport {
   bannedMembers = new Map();
   emojis = new Map();
   stickers = new Map();
+  invites = new Map();
   onboarding = new Map();
   premiumTier;
   #sequence = 0;
@@ -356,6 +416,10 @@ export class InMemoryDiscordTransport {
     this.currentUser = options.currentUser ?? { id: "bot-discord", username: "Discord Bot", bot: true };
     const guild = options.guild ?? { id: "guild-discord", name: "Discord Guild", ownerId: "owner" };
     this.guilds.set(guild.id, guild);
+    for (const [code, wire] of options.invites ?? []) {
+      qualifyDiscordInviteCode(code);
+      this.invites.set(code, wire);
+    }
     this.roles.set(guild.id, { id: guild.id, guildId: guild.id, name: "@everyone", permissions: "0" });
     this.premiumTier = options.premiumTier ?? 0;
   }
@@ -372,6 +436,18 @@ export class InMemoryDiscordTransport {
     const guild = this.guilds.get(guildId);
     if (guild === undefined) throw new Error(`unknown guild ${guildId}`);
     return guild;
+  }
+
+  /** Simulated original Get Invite, with exactly the same typed projection as REST. */
+  async getInvite(code) {
+    qualifyDiscordInviteCode(code);
+    const wire = this.invites.get(code);
+    if (wire === undefined) {
+      const error = new Error(`unknown Discord invite ${code}`);
+      error.status = 404;
+      throw error;
+    }
+    return discordInviteFromWire(wire, code, new Date().toISOString());
   }
 
   async listGuilds() {
