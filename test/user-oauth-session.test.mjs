@@ -127,6 +127,19 @@ test("pending, departed and rate-limited Discord membership never issue sessions
   assert.equal(rejected.headers.getSetCookie().length,0);
 });
 
+test("Discord may omit pending for ordinary members, but malformed present values cannot log in",async()=>{
+  const ordinary=fixture();ordinary.setMember({roles:[]});
+  const admitted=await complete(ordinary,await begin(ordinary));
+  assert.equal(admitted.status,303,"absent optional pending means not pending");
+  assert.ok(cookiePair(admitted,"__Host-lspace-discord"));
+  for(const pending of [null,"false",0,1]) {
+    const malformed=fixture();malformed.setMember({roles:[],pending});
+    const refused=await complete(malformed,await begin(malformed));
+    assert.equal(refused.status,503,"invalid Discord response must not become an authenticated session");
+    assert.equal(refused.headers.getSetCookie().length,0);
+  }
+});
+
 test("expired CSRF state and bounded capacities fail without grant",async()=>{
   const expired=fixture();const pair=await begin(expired);
   expired.advance(5*60_000+1);
