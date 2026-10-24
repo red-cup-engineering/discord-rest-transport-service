@@ -32,7 +32,7 @@
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
-    "@red-cup-engineering/json-engineering-services-section": "0.4.0"
+    "@red-cup-engineering/json-services-section": "0.4.0"
   },
   "sideEffects": false,
   "private": false,
